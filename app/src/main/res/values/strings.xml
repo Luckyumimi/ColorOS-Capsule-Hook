@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">ColorOS Capsule Hook</string>
-    <string name="app_description">Draws a small marker on a verified ColorOS media capsule.</string>
+    <string name="app_description">Demonstrates length and background hooks for a verified ColorOS media capsule.</string>
 </resources>

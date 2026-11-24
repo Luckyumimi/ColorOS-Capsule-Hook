@@ -75,6 +75,8 @@ internal class PluginContract(loader: ClassLoader) {
     }.onEach { it.isAccessible = true }
     val draw = capsule.method("onDraw", Void.TYPE, Canvas::class.java)
     private val resizing = optionalMember { capsule.method("getWidthChanging", Boolean::class.javaPrimitiveType!!) }
+    private val drawableWidth = optionalMember { capsule.method("getCapsuleDrawableWidth", Int::class.javaPrimitiveType!!) }
+    private val showingKeys = optionalMember { container.method("getShowingKeyList", List::class.java) }
 
     init {
         require(keys.isNotEmpty()) { "No candidate notification-key fields on the view item" }
@@ -92,7 +94,15 @@ internal class PluginContract(loader: ClassLoader) {
         return keys.any { it.get(item) == key }
     }
 
-    fun isResizing(view: ViewGroup) = resizing?.invoke(view) == true
+    fun isResizing(view: ViewGroup): Boolean? = resizing?.invoke(view) as? Boolean
+
+    fun animatedWidth(view: ViewGroup): Int? = (drawableWidth?.invoke(view) as? Int)?.takeIf { it > 0 }
+
+    fun isOnlyShowing(view: ViewGroup, key: String): Boolean {
+        val parent = view.parent ?: return false
+        if (!container.isInstance(parent)) return false
+        return (showingKeys?.invoke(parent) as? List<*>)?.singleOrNull() == key
+    }
 }
 
 internal fun ViewGroup.walk(depth: Int): Sequence<View> = sequence {

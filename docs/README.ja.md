@@ -2,7 +2,7 @@
 
 [简体中文](../README.md) · [English](README.en.md) · 日本語
 
-[Color lyric](https://github.com/Luckyumimi/Color-lyric) をもとにした、ColorOS 17 のメディアカプセル向けの最小実装です。モダン Xposed API 102 を使い、対象のメディアに紐づくことを確認したカプセルの右下に小さな緑の点を描画します。純正レイアウトは置き換えません。歌詞、ジャケット画像からの配色、設定画面は含みません。
+[Color lyric](https://github.com/Luckyumimi/Color-lyric) をもとにした、ColorOS 17 のメディアカプセル向けの最小実装です。モダン Xposed API 102 を使い、対象のメディアに紐づくことを確認したカプセルの幅を変更し、背景色と右下の緑の点を描画します。純正のコントロールは置き換えません。歌詞、ジャケット画像からの配色、設定画面は含みません。
 
 ## ビルドと動作確認
 
@@ -21,15 +21,22 @@ Windows の PowerShell では `./gradlew.bat :app:testDebugUnitTest :app:assembl
 | システム UI に入る | `onModuleLoaded` でプロセスを、`onPackageReady` でパッケージ名と最初のパッケージかどうかを確認します。エントリーポイント、固定スコープ、API バージョンは [`META-INF/xposed`](../app/src/main/resources/META-INF/xposed/) で宣言します。 |
 | プラグインを探す | `CapsulePluginContainerController` のホストビューから、ウィンドウに接続された唯一の `CapsuleContainerRoot` を探します。`CapsuleView` はシステム UI ではなく、ルートビューが使うプラグインの ClassLoader で解決します。 |
 | メディアとの紐づきを確認する | `sendLiveAlertData(String)` を監視し、使えない場合は `sendDataToPlugin(String, StatusBarNotification)` に切り替えます。システム UI が発行に成功した通知だけを処理し、カプセルのカード、アクティブなプレイヤー ID、メディア行、`MediaController` のパッケージ名を照合します。アクティブ ID がないときはカードが一件だけの場合に限ります。 |
-| 対象を特定して描画する | 現在のプラグインコンテナの中から、表示中かつ接続済みで、`getViewItem()` に完全一致する通知キーを持つ唯一の `CapsuleView` を探します。元の `onDraw(Canvas)` を先に実行し、対象ビューと通知の対応を再確認してから点を描きます。純正の幅アニメーションを検出したフレームでは描きません。 |
-| 純正表示に戻す | メディア通知の取り消しやコントローラーの解放時に紐づきを解除して再描画します。ホスト切断時に監視を解除し、プラグインの取り外しや交換時に描画フックを解除します。前提が合わなければ純正表示をそのまま使います。 |
+| 対象を特定して描画する | 現在のプラグインコンテナの中から、表示中かつ接続済みで、`getViewItem()` に完全一致する通知キーを持つ唯一の `CapsuleView` を探します。元の `onDraw(Canvas)` を先に実行し、対象ビューと通知の対応を再確認してから背景色とマーカーを重ねます。 |
+| 純正表示に戻す | メディア通知の取り消しやコントローラーの解放時に紐づきを解除し、幅を戻して再描画します。ホスト切断時に監視を解除し、プラグインの取り外しや交換時に描画フックを解除します。前提が合わない機能は純正動作のままにします。 |
 
 ライフサイクルは [`CapsuleHookModule.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/CapsuleHookModule.kt)、シグネチャとビューの探索は [`NativeCapsule.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/NativeCapsule.kt) を参照してください。
+
+## 幅と背景のサンプル
+
+[`CapsuleAppearance.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/CapsuleAppearance.kt) の `demoWidthDp`（初期値 **170 dp**）と `demoBackgroundArgb`（半透明の深い青緑 `0xA3336761`）を変更できます。片方を `null` にして再ビルドすると、そのサンプルだけ無効になります。
+
+- **幅：** 描画前に対象の紐づきを再確認します。`getShowingKeyList()` でコンテナ内の表示カードが対象の一枚だけと確認でき、`getWidthChanging()` が `false` のときだけ `LayoutParams.width` を変更します。純正のサイズ変更アニメーションには介入しません。紐づけ解除時はモジュールが変更した幅だけを戻し、システム側の後からの変更は保持します。
+- **背景：** 純正 `onDraw` の後、子ビューの描画前に半透明の角丸背景を重ねます。通常はレイアウト済みの幅を、アニメーション中は `getCapsuleDrawableWidth()` で得た幅を中心に合わせて使います。純正の幅状態が取得できなければ背景を描画しません。元の背景 Drawable は変更しないため、紐づけ解除後に再描画すると重ねた色は消えます。
 
 ## 歌詞描画への応用
 
 1. **純正の表示枠をリソース名で探す。** 確認済みのカプセル内で `left_section`、`right_section`、`img_primary`、`fl_title/title`、`fl_content/content` を探し、一意性と親子関係を確認します。表示状態や幅を変更する場合は元の値を保存し、無効化や紐づけ解除時に戻します。
-2. **カメラの切り欠きと純正アニメーションに追従する。** 切り欠きの位置をカプセル内の座標に変換し、同じ歌詞レイアウトを左右に分けてクリップします。開閉に追従させる場合は `getWidthChanging()` と `getCapsuleDrawableWidth()` の値で描画範囲を決め、途中の幅を確定後の幅として扱わないようにします。サンプルはアニメーション自体を制御しません。
+2. **カメラの切り欠きと純正アニメーションに追従する。** 切り欠きの位置をカプセル内の座標に変換し、同じ歌詞レイアウトを左右に分けてクリップします。開閉に追従させる場合は背景サンプルのアニメーション描画範囲を再利用し、途中の幅を確定後のレイアウト幅として扱わないようにします。
 3. **検証済みのメディアセッションに追従する。** プレイヤーが変わったら通知キー、セッション、パッケージを再照合します。歌詞を表示する場合は、そのセッションのメタデータと再生状態を監視し、一時停止、シーク、曲の切り替え時に再生位置を取得し直します。
 
 描画全体の実装は [Color lyric の System UI ソース](https://github.com/Luckyumimi/Color-lyric/tree/main/app/src/main/java/shop/terramoor/github/io/systemui) を参照してください。
@@ -38,7 +45,7 @@ Windows の PowerShell では `./gradlew.bat :app:testDebugUnitTest :app:assembl
 
 クラス名、メソッド、ビュー構造は Color lyric が対応している ColorOS 17 の実装に基づきます。Android の公開 API ではなく、すべてのファームウェアで動作するとは限りません。フックの状態は Logcat の `ColorOSCapsuleHook` タグで確認できます。不具合報告には端末名、ファームウェア、システム UI とプラグインのバージョン、再現手順を添えてください。通知キー、セッショントークン、システム APK は共有しないでください。
 
-ローカル単体テストはカードの一意性、プレイヤー ID の完全一致、情報が不足したカードの除外を確認します。実機でのフック動作は別途確認が必要です。プレイヤーの切り替え、一時停止、カプセルを閉じる操作、メディア以外のカード、無効化後の復元を確認してください。実行時の処理は端末内で完結し、ネットワークやモデルを呼び出すことも、歌詞や通知内容をログに記録することもありません。
+ローカル単体テストはメディアカードの照合、幅の復元、背景のアニメーション描画範囲を確認します。実機でのフック動作は別途確認が必要です。プレイヤーの切り替え、一時停止、カプセルの開閉、複数カードの同時表示、無効化後の復元を確認してください。実行時の処理は端末内で完結し、ネットワークやモデルを呼び出すことも、歌詞や通知内容をログに記録することもありません。
 
 ## ライセンス
 

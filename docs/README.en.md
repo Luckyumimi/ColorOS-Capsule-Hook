@@ -2,7 +2,7 @@
 
 [简体中文](../README.md) · English · [日本語](README.ja.md)
 
-A minimal ColorOS 17 media capsule example adapted from [Color lyric](https://github.com/Luckyumimi/Color-lyric). It uses the modern Xposed API 102 to draw a small green dot in the lower-right corner of a verified media capsule. It does not replace the native layout or include lyrics, artwork colors, or settings.
+A minimal ColorOS 17 media capsule example adapted from [Color lyric](https://github.com/Luckyumimi/Color-lyric). It uses the modern Xposed API 102 to set the width of a verified media capsule, overlay a background tint, and draw a small green marker. It does not replace native controls or include lyrics, artwork colors, or settings.
 
 ## Build and try it
 
@@ -21,15 +21,22 @@ On Windows, run `./gradlew.bat :app:testDebugUnitTest :app:assembleDebug` in Pow
 | Enter System UI | Check the process in `onModuleLoaded`, then check the package and first-package flag in `onPackageReady`. [`META-INF/xposed`](../app/src/main/resources/META-INF/xposed/) declares the entry point, static scope, and API version. |
 | Resolve the plugin | Find one attached `CapsuleContainerRoot` under the `CapsulePluginContainerController` host view. Resolve `CapsuleView` using the root view's plugin class loader, not System UI's loader. |
 | Verify ownership | Observe `sendLiveAlertData(String)`, or fall back to `sendDataToPlugin(String, StatusBarNotification)` when the first entry is unavailable. Process successful System UI media notifications only. Match the capsule card, active player ID, media row, and `MediaController` package. If the active ID is missing, only a single card is accepted. |
-| Bind and draw | Find one visible, attached `CapsuleView` in the current plugin container whose `getViewItem()` contains the exact notification key. Run the original `onDraw(Canvas)` first, recheck the receiver and ownership, then draw the dot. Skip frames when the optional native width state reports an animation. |
-| Restore native rendering | Clear the binding and redraw on media cancellation or controller release. Remove observers when the host detaches and unhook drawing when the plugin is removed or replaced. If the contract cannot be verified, leave the native UI alone. |
+| Bind and draw | Find one visible, attached `CapsuleView` in the current plugin container whose `getViewItem()` contains the exact notification key. Run the original `onDraw(Canvas)` first, recheck the receiver and ownership, then overlay the background and marker. |
+| Restore native rendering | Clear the binding, restore the width, and redraw on media cancellation or controller release. Remove observers when the host detaches and unhook drawing when the plugin is removed or replaced. Leave the corresponding native behavior alone if its contract cannot be verified. |
 
 See [`CapsuleHookModule.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/CapsuleHookModule.kt) for lifecycle and [`NativeCapsule.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/NativeCapsule.kt) for signatures and view discovery.
+
+## Width and background examples
+
+Edit `demoWidthDp` (**170 dp** by default) and `demoBackgroundArgb` (`0xA3336761`, a translucent dark teal) in [`CapsuleAppearance.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/CapsuleAppearance.kt). Set either value to `null` and rebuild to disable that example independently.
+
+- **Width:** Recheck ownership before drawing. Set `LayoutParams.width` only when `getShowingKeyList()` confirms the media card is the sole visible card in its container and `getWidthChanging()` returns `false`. Leave OEM resizing alone. On unbind, restore only the width the module still owns, preserving later OEM changes.
+- **Background:** Paint a translucent rounded overlay after native `onDraw` and before child controls are drawn. Use the laid-out view width at rest and the centered width from `getCapsuleDrawableWidth()` during animation. Skip the overlay if the native width state is unavailable. The original background Drawable is untouched; redrawing after unbinding removes the overlay.
 
 ## Extending the example to lyrics
 
 1. **Find native slots by name.** Inside the verified capsule, resolve `left_section`, `right_section`, `img_primary`, `fl_title/title`, and `fl_content/content` by resource name. Check uniqueness and parent relationships. Save any visibility or layout properties you change and restore them when disabled or unbound.
-2. **Respect the display cutout and OEM animation.** Convert the cutout into local capsule coordinates and draw complementary clipped slices of the same lyric layout. To keep an overlay in sync with opening and closing, clip to the width reported by `getWidthChanging()` and `getCapsuleDrawableWidth()` without treating an intermediate frame as the settled width. The example does not drive these animations.
+2. **Respect the display cutout and OEM animation.** Convert the cutout into local capsule coordinates and draw complementary clipped slices of the same lyric layout. Reuse the background example's animated bounds to clip lyrics during opening and closing without treating an intermediate frame as the settled width.
 3. **Follow the verified session.** Recheck the notification key, session, and player whenever the active player changes. Listen to metadata and playback state on that session and use its playback clock; resample on seeks, pauses, and track changes.
 
 See the [Color lyric System UI implementation](https://github.com/Luckyumimi/Color-lyric/tree/main/app/src/main/java/shop/terramoor/github/io/systemui) for the full rendering path.
@@ -38,7 +45,7 @@ See the [Color lyric System UI implementation](https://github.com/Luckyumimi/Col
 
 The private class names, methods, and view structure come from the ColorOS 17 path used by Color lyric. They are not public Android APIs or a promise of compatibility with every firmware. Check `ColorOSCapsuleHook` in Logcat for host/plugin installation messages. When reporting a problem, include the device model, firmware, System UI and plugin versions, and steps to reproduce. Do not share notification keys, session tokens, or system APKs.
 
-Local unit tests cover card selection, exact active-player matching, and rejection of missing or ambiguous ownership. They do not exercise OEM hooks. On a device, check player switching, pause, capsule close, unrelated cards, and restoration after disabling the module. All runtime logic is local, with no network or model calls and no logging of lyrics or notification contents.
+Local unit tests cover media-card matching, width restoration, and animated background bounds. They do not exercise OEM hooks. On a device, check player switching, pause, capsule opening and closing, simultaneous cards, and restoration after disabling the module. All runtime logic is local, with no network or model calls and no logging of lyrics or notification contents.
 
 ## License
 

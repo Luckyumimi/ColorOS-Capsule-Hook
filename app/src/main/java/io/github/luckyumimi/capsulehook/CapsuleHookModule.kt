@@ -18,6 +18,7 @@ import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import io.github.libxposed.api.error.XposedFrameworkError
 import java.lang.reflect.Method
+import kotlin.math.roundToInt
 
 class CapsuleHookModule : XposedModule() {
     private var targetProcess = false
@@ -46,8 +47,8 @@ class CapsuleHookModule : XposedModule() {
                     if (result == true) binding.release(receiver)
                 } else if (result == true) {
                     val context = binding.host?.context ?: return@onMain
-                    binding.releaseMedia()
-                    binding.setMedia(receiver, host.mediaKey(context, receiver, dispatched))
+                    val key = checked("Verify media") { host.mediaKey(context, receiver, dispatched) }
+                    binding.setMedia(receiver, key)
                 }
             }
             val primary = host.publish?.let { method -> checked("Install primary media hook") {
@@ -84,10 +85,17 @@ class CapsuleHookModule : XposedModule() {
         private var mediaKey: String? = null
         private var capsule: ViewGroup? = null
         private var dirty = true
+        private val length = CapsuleLength<ViewGroup.LayoutParams>()
+        private val background = demoBackgroundArgb?.let { argb ->
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = argb }
+        }
         private val marker = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(88, 214, 141) }
         private val layout = ViewTreeObserver.OnGlobalLayoutListener { dirty = true }
         private val preDraw = ViewTreeObserver.OnPreDrawListener {
-            checked("Resolve capsule", onFailure = { bind(null) }) { refresh() }
+            checked("Update capsule", onFailure = { bind(null) }) {
+                refresh()
+                maintainLength()
+            }
             true
         }
 
@@ -128,6 +136,7 @@ class CapsuleHookModule : XposedModule() {
         }
 
         fun setMedia(receiver: Any, key: String?) {
+            if (key != mediaKey) bind(null)
             controller = receiver.takeIf { key != null }
             mediaKey = key
             dirty = true
@@ -177,20 +186,64 @@ class CapsuleHookModule : XposedModule() {
             if (view === capsule) return
             val previous = capsule
             capsule = view
-            previous?.invalidate()
+            if (previous != null) {
+                restoreLength(previous)
+                previous.invalidate()
+            }
             view?.invalidate()
+        }
+
+        private fun ownsBoundView(target: ViewGroup, contract: PluginContract, key: String): Boolean {
+            val activeRoot = root ?: return false
+            val activeHost = host ?: return false
+            return target.isShown && target.isAttachedToWindow && target.isUnder(activeRoot) &&
+                activeRoot.isUnder(activeHost) && contract.owns(target, key)
+        }
+
+        private fun maintainLength() {
+            val target = capsule ?: return
+            val contract = plugin ?: return
+            val key = mediaKey ?: return
+            val widthDp = demoWidthDp ?: return
+            if (!ownsBoundView(target, contract, key)) {
+                bind(null)
+                return
+            }
+            val resizing = contract.isResizing(target)
+            if (resizing == true) return
+            if (resizing == null || !contract.isOnlyShowing(target, key)) {
+                restoreLength(target)
+                return
+            }
+            if (target.width <= 0 || target.height <= 0) return
+            val params = target.layoutParams ?: return
+            val desired = (widthDp * target.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
+            length.apply(params, params.width, desired)?.let {
+                params.width = it
+                target.layoutParams = params
+            }
+        }
+
+        private fun restoreLength(target: ViewGroup) {
+            val params = target.layoutParams
+            val restored = length.restore(params, params?.width) ?: return
+            checkNotNull(params).width = restored
+            target.layoutParams = params
         }
 
         private fun draw(receiver: Any, canvas: Canvas) {
             val target = capsule ?: return
             val contract = plugin ?: return
             val key = mediaKey ?: return
-            val activeRoot = root ?: return
-            val activeHost = host ?: return
-            if (receiver !== target || !target.isShown || !target.isAttachedToWindow ||
-                !target.isUnder(activeRoot) || !activeRoot.isUnder(activeHost) || !contract.owns(target, key)
-            ) return
-            if (contract.isResizing(target)) return
+            if (receiver !== target || !ownsBoundView(target, contract, key)) return
+            val resizing = contract.isResizing(target)
+            val animated = if (resizing == true) contract.animatedWidth(target) ?: return else null
+            if (resizing != null && background != null) {
+                val bounds = capsuleBounds(target.width, target.measuredWidth, target.height, animated) ?: return
+                canvas.drawRoundRect(bounds.left.toFloat(), 0f, bounds.right.toFloat(), bounds.height.toFloat(),
+                    bounds.radius, bounds.radius, background)
+            }
+            if (resizing == true) return
             val dp = target.resources.displayMetrics.density
             if (target.width < 32 * dp || target.height < 16 * dp) return
             canvas.drawCircle(target.width - 10 * dp, target.height - 7 * dp, 2 * dp, marker)
