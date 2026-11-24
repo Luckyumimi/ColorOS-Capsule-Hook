@@ -1,0 +1,45 @@
+# ColorOS Capsule Hook
+
+[简体中文](../README.md) · English · [日本語](README.ja.md)
+
+A minimal ColorOS 17 media capsule example adapted from [Color lyric](https://github.com/Luckyumimi/Color-lyric). It uses the modern Xposed API 102 to draw a small green dot in the lower-right corner of a verified media capsule. It does not replace the native layout or include lyrics, artwork colors, or settings.
+
+## Build and try it
+
+Use JDK 25, Android SDK Platform 37 (the directory may be named `android-37.0`), and an LSPosed-compatible framework with API 102 support. Use the included Gradle Wrapper:
+
+```sh
+./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
+
+On Windows, run `./gradlew.bat :app:testDebugUnitTest :app:assembleDebug` in PowerShell. Install `app/build/outputs/apk/debug/app-debug.apk`, enable the module for System UI (`com.android.systemui`), reboot, then play music and let the native media capsule appear. If the media notification predates module loading, start playback again to get a fresh update. The module has no launcher activity.
+
+## How the hook works
+
+| Step | What the example does |
+| --- | --- |
+| Enter System UI | Check the process in `onModuleLoaded`, then check the package and first-package flag in `onPackageReady`. [`META-INF/xposed`](../app/src/main/resources/META-INF/xposed/) declares the entry point, static scope, and API version. |
+| Resolve the plugin | Find one attached `CapsuleContainerRoot` under the `CapsulePluginContainerController` host view. Resolve `CapsuleView` using the root view's plugin class loader, not System UI's loader. |
+| Verify ownership | Observe `sendLiveAlertData(String)`, or fall back to `sendDataToPlugin(String, StatusBarNotification)` when the first entry is unavailable. Process successful System UI media notifications only. Match the capsule card, active player ID, media row, and `MediaController` package. If the active ID is missing, only a single card is accepted. |
+| Bind and draw | Find one visible, attached `CapsuleView` in the current plugin container whose `getViewItem()` contains the exact notification key. Run the original `onDraw(Canvas)` first, recheck the receiver and ownership, then draw the dot. Skip frames when the optional native width state reports an animation. |
+| Restore native rendering | Clear the binding and redraw on media cancellation or controller release. Remove observers when the host detaches and unhook drawing when the plugin is removed or replaced. If the contract cannot be verified, leave the native UI alone. |
+
+See [`CapsuleHookModule.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/CapsuleHookModule.kt) for lifecycle and [`NativeCapsule.kt`](../app/src/main/java/io/github/luckyumimi/capsulehook/NativeCapsule.kt) for signatures and view discovery.
+
+## Extending the example to lyrics
+
+1. **Find native slots by name.** Inside the verified capsule, resolve `left_section`, `right_section`, `img_primary`, `fl_title/title`, and `fl_content/content` by resource name. Check uniqueness and parent relationships. Save any visibility or layout properties you change and restore them when disabled or unbound.
+2. **Respect the display cutout and OEM animation.** Convert the cutout into local capsule coordinates and draw complementary clipped slices of the same lyric layout. To keep an overlay in sync with opening and closing, clip to the width reported by `getWidthChanging()` and `getCapsuleDrawableWidth()` without treating an intermediate frame as the settled width. The example does not drive these animations.
+3. **Follow the verified session.** Recheck the notification key, session, and player whenever the active player changes. Listen to metadata and playback state on that session and use its playback clock; resample on seeks, pauses, and track changes.
+
+See the [Color lyric System UI implementation](https://github.com/Luckyumimi/Color-lyric/tree/main/app/src/main/java/shop/terramoor/github/io/systemui) for the full rendering path.
+
+## Compatibility and troubleshooting
+
+The private class names, methods, and view structure come from the ColorOS 17 path used by Color lyric. They are not public Android APIs or a promise of compatibility with every firmware. Check `ColorOSCapsuleHook` in Logcat for host/plugin installation messages. When reporting a problem, include the device model, firmware, System UI and plugin versions, and steps to reproduce. Do not share notification keys, session tokens, or system APKs.
+
+Local unit tests cover card selection, exact active-player matching, and rejection of missing or ambiguous ownership. They do not exercise OEM hooks. On a device, check player switching, pause, capsule close, unrelated cards, and restoration after disabling the module. All runtime logic is local, with no network or model calls and no logging of lyrics or notification contents.
+
+## License
+
+[Apache-2.0](../LICENSE). Adapted from [Color lyric](https://github.com/Luckyumimi/Color-lyric), with the [libxposed API](https://github.com/libxposed/api) as a compile-only dependency. No ColorOS system files are distributed here.
